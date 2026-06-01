@@ -146,6 +146,10 @@ class IdentityManager:
 
         # Counter for generating new IDs
         self._next_id : int = 1
+        
+        # Thread safety lock for multi-camera processing
+        import threading
+        self._lock = threading.Lock()
 
         # Load existing data if available
         self._load()
@@ -182,21 +186,22 @@ class IdentityManager:
 
         embedding = self._ensure_float32(embedding)
 
-        # Search FAISS
-        person_id, similarity, is_new = self._search_or_create(
-            embedding, track_id, camera_id, frame_num
-        )
-
-        # Update identity metadata
-        identity = self._identities[person_id]
-        identity.track_ids.add(track_id)
-        identity.camera_ids.add(camera_id)
-        identity.last_seen = frame_num
-
-        # Store embedding periodically (not every frame — too many vectors)
-        if identity.embedding_count < self.MAX_EMBEDDINGS_PER_IDENTITY:
-            self._add_to_index(embedding, person_id)
-            identity.embedding_count += 1
+        with self._lock:
+            # Search FAISS
+            person_id, similarity, is_new = self._search_or_create(
+                embedding, track_id, camera_id, frame_num
+            )
+    
+            # Update identity metadata
+            identity = self._identities[person_id]
+            identity.track_ids.add(track_id)
+            identity.camera_ids.add(camera_id)
+            identity.last_seen = frame_num
+    
+            # Store embedding periodically (not every frame — too many vectors)
+            if identity.embedding_count < self.MAX_EMBEDDINGS_PER_IDENTITY:
+                self._add_to_index(embedding, person_id)
+                identity.embedding_count += 1
 
         if is_new:
             logger.info(

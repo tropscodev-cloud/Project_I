@@ -30,7 +30,12 @@ import networkx as nx
 
 from core.graph.incident_classifier import Incident, IncidentType
 from core.graph.neo4j_store import Neo4jStore
-from config.settings import ENABLE_LOUVAIN_COMMUNITIES, GRAPH_BACKEND
+from config.settings import (
+    ENABLE_LOUVAIN_COMMUNITIES,
+    GRAPH_BACKEND,
+    MIN_CONFIDENCE_FLOOR,
+    MIN_CONFIDENCE_FLOOR_MEETINGS,
+)
 
 
 # ── Relationship labels ───────────────────────────────────────────────────────
@@ -65,6 +70,7 @@ class RelationshipEdge:
     total_duration_s : float
     cameras          : set
     locations        : list
+    location_events  : list
     first_seen       : float
     last_seen        : float
     color            : str = "#888888"
@@ -91,6 +97,8 @@ class RelationshipEdge:
             "avg_duration_s"  : round(self.avg_duration_s, 1),
             "total_duration_s": round(self.total_duration_s, 1),
             "cameras"         : list(self.cameras),
+            "locations"       : list(self.locations),
+            "location_events"  : list(self.location_events),
             "first_seen"      : self.first_seen,
             "last_seen"       : self.last_seen,
         }
@@ -187,6 +195,7 @@ class GraphDB:
                     total_duration_s = incident.duration_s,
                     cameras          = set(),
                     locations        = [],
+                    location_events  = [],
                     first_seen       = now,
                     last_seen        = now,
                     day_key          = self._day_key(),
@@ -222,10 +231,19 @@ class GraphDB:
                 e["incident_counts"] = defaultdict(int, e["incident_counts"])
             e["incident_counts"][incident.incident_type.value] += 1
             e["cameras"].add(incident.camera_id)
+            if "location_events" not in e:
+                e["location_events"] = []
             if incident.location_px != (0, 0):
                 e["locations"].append(incident.location_px)
                 if len(e["locations"]) > 50:
                     e["locations"] = e["locations"][-50:]
+                e["location_events"].append({
+                    "camera_id": incident.camera_id,
+                    "location_px": list(incident.location_px),
+                    "timestamp": incident.timestamp,
+                })
+                if len(e["location_events"]) > 50:
+                    e["location_events"] = e["location_events"][-50:]
 
             if self._neo4j and self._neo4j.enabled:
                 self._neo4j.upsert_relationship(
@@ -238,23 +256,34 @@ class GraphDB:
 
             return self._edge_to_obj(pid_a, pid_b)
 
-    def apply_decay(self, multiplier: float = 0.998) -> int:
+    def apply_decay(
+        self,
+        multiplier: float = 0.998,
+        prune_threshold: float = MIN_CONFIDENCE_FLOOR,
+    ) -> int:
         """
         Multiplicative decay — strong relationships fade slower than weak ones.
         0.80 confidence → ~27 hrs to reach 0.40
         0.20 confidence → ~6 hrs to reach 0.10
-        Deletes edges below 0.01.
+        Deletes weak edges below the configured confidence floor.
         """
         with self._lock:
             to_delete = []
             for a, b, data in self._graph.edges(data=True):
                 data["confidence"]   = round(data["confidence"] * multiplier, 6)
                 data["relationship"] = relationship_label(data["confidence"])
-                if data["confidence"] < 0.01:
+                total_meetings = sum(dict(data.get("incident_counts", {})).values())
+                if (
+                    data["confidence"] < prune_threshold
+                    and total_meetings < MIN_CONFIDENCE_FLOOR_MEETINGS
+                ):
                     to_delete.append((a, b))
             for a, b in to_delete:
                 self._graph.remove_edge(a, b)
-                logger.info(f"Edge decayed to near-zero → deleted: {a} ↔ {b}")
+                logger.info(
+                    f"Weak relationship pruned | {a} ↔ {b} | "
+                    f"threshold={prune_threshold:.3f}"
+                )
             return len(to_delete)
 
     # ── Query API ─────────────────────────────────────────────────────────────
@@ -314,6 +343,8 @@ class GraphDB:
                     "avg_duration_s"  : round(edge.avg_duration_s, 1),
                     "total_duration_s": round(edge.total_duration_s, 1),
                     "cameras"         : list(edge.cameras),
+                    "locations"       : list(edge.locations),
+                    "location_events" : list(edge.location_events),
                     "first_seen"      : edge.first_seen,
                     "last_seen"       : edge.last_seen,
                 })
@@ -434,6 +465,7 @@ class GraphDB:
             total_duration_s = d.get("total_duration_s", 0.0),
             cameras          = d.get("cameras", set()),
             locations        = d.get("locations", []),
+            location_events  = d.get("location_events", []),
             first_seen       = d.get("first_seen", 0),
             last_seen        = d.get("last_seen", 0),
             color            = RELATIONSHIP_COLORS.get(rel, "#888888"),
@@ -463,6 +495,7 @@ class GraphDB:
                         total_duration_s = e.get("total_duration_s", 0.0),
                         cameras          = set(e.get("cameras", [])),
                         locations        = e.get("locations", []),
+                        location_events  = e.get("location_events", []),
                         first_seen       = e.get("first_seen", 0),
                         last_seen        = e.get("last_seen", 0),
                         day_key          = self._day_key(),

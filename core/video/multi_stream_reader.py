@@ -8,7 +8,7 @@ into a shared queue so the pipeline always gets a full
 set of frames (one per camera) at the same time.
 
 Usage:
-    reader = MultiCameraStreamReader("data/Wildtrack/")
+    reader = MultiCameraStreamReader("data/")
     for frame_set in reader.frame_sets():
         # frame_set = {
         #   "cam1": (frame_num, frame_bgr),
@@ -246,7 +246,7 @@ if __name__ == "__main__":
     import sys
     import numpy as np
 
-    source_dir = sys.argv[1] if len(sys.argv) > 1 else "data/Wildtrack"
+    source_dir = sys.argv[1] if len(sys.argv) > 1 else "data"
 
     print(f"\nTesting MultiCameraStreamReader with: {source_dir}")
     print("Shows all cameras in a grid. Press Q to quit.\n")

@@ -1,0 +1,11 @@
+{
+  "running": false,
+  "stop_requested": false,
+  "person_count": 0,
+  "active_cams": [],
+  "last_update": 0.0,
+  "total_frames": 0,
+  "camera_sources": {},
+  "fps": {},
+  "errors": []
+}

@@ -102,7 +102,7 @@ with st.sidebar:
         st.image(
             f"{BASE}/video/{cam}",
             caption=f"{cam.upper()} — LIVE",
-            use_container_width=True,
+            width='stretch',
         )
     else:
         st.info("No cameras yet. Start run_live.py")
@@ -218,7 +218,7 @@ with tab_graph:
             margin=dict(l=10, r=10, t=10, b=10),
             height=600,
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
         # Summary table
         st.markdown("### All Relationships")
@@ -376,7 +376,7 @@ with tab_edge:
             height=220,
             showlegend=False,
         )
-        st.plotly_chart(fig_inc, use_container_width=True)
+        st.plotly_chart(fig_inc, width='stretch')
 
         # Boost modifiers explanation
         st.markdown("#### Confidence Modifiers")
@@ -452,7 +452,7 @@ with tab_decay:
             height=max(300, len(sorted_e) * 28 + 60),
             barmode='overlay',
         )
-        st.plotly_chart(fig_decay, use_container_width=True)
+        st.plotly_chart(fig_decay, width='stretch')
 
         # Table
         st.markdown("#### Edge Status Table")
@@ -473,7 +473,7 @@ with tab_decay:
         import pandas as pd
         st.dataframe(
             pd.DataFrame(rows),
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
         )
 

@@ -361,7 +361,7 @@ class ConfidenceEngine:
         return f"{bx}:{by}"
 
     def _midpoint(self, event: InteractionEvent) -> Tuple[int, int]:
-        return (0, 0)   # pipeline.py fills this in when it has centers
+        return getattr(event, "_location_px", (0, 0)) or (0, 0)
 
     def _day_key(self) -> str:
         t = time.localtime()

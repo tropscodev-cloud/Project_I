@@ -132,91 +132,212 @@ def call_ollama(prompt: str, system: str = "", timeout: int = 30) -> Optional[st
 
 # ── Anomaly detection ─────────────────────────────────────────────────────────
 
-ANOMALY_SYSTEM = """You are a security analyst assistant. 
-You receive anonymous surveillance statistics — no person names or IDs.
-Identify unusual patterns that may warrant human review.
-Be concise. Return a JSON list of alerts like:
-[{"severity": "high/medium/low", "description": "..."}]
-If nothing unusual, return: []
-Never invent details. Only flag what the data explicitly shows."""
+ANOMALY_SYSTEM = """You are a surveillance security analyst.
+You receive graph statistics from a multi-camera person tracking system.
+Your job: identify unusual or suspicious patterns that warrant human review.
+
+Rules:
+- Be concise and specific. Reference Person IDs if available.
+- Return ONLY a JSON list of alerts, no other text.
+- Each alert: {"severity": "high" or "medium" or "low", "description": "..."}
+- If nothing unusual, return exactly: []
+- Never invent data. Only flag what the statistics explicitly show.
+- High severity: coordinated movement, rapid relationship formation, hub persons
+- Medium severity: unusual connectivity spikes, repeated meetings
+- Low severity: minor statistical outliers"""
+
+
+def _build_anomaly_prompt(graph_data: dict) -> str:
+    """Build a rich anomaly detection prompt from graph data."""
+    nodes = graph_data.get("nodes", [])
+    edges = graph_data.get("edges", [])
+
+    # Compute degree map
+    deg_map = {}
+    for e in edges:
+        deg_map[e.get("person_id_a", "?")] = deg_map.get(e.get("person_id_a", "?"), 0) + 1
+        deg_map[e.get("person_id_b", "?")] = deg_map.get(e.get("person_id_b", "?"), 0) + 1
+
+    # Top connected persons
+    top_persons = sorted(deg_map.items(), key=lambda x: x[1], reverse=True)[:10]
+
+    # Relationship breakdown
+    rel_counts = {}
+    for e in edges:
+        r = e.get("relationship", "unknown")
+        rel_counts[r] = rel_counts.get(r, 0) + 1
+
+    # Strong relationships
+    strong = [e for e in edges if e.get("confidence", 0) > 0.5]
+    very_strong = [e for e in edges if e.get("confidence", 0) > 0.8]
+
+    # High meeting frequency
+    frequent = [e for e in edges if e.get("total_meetings", 0) >= 5]
+
+    prompt = f"""Current surveillance graph statistics:
+
+Total persons detected: {len(nodes)}
+Total relationships: {len(edges)}
+Strong relationships (conf > 0.5): {len(strong)}
+Very strong relationships (conf > 0.8): {len(very_strong)}
+High-frequency meeting pairs (5+ meetings): {len(frequent)}
+
+Relationship breakdown: {json.dumps(rel_counts, indent=2)}
+
+Top 10 most connected persons:
+{chr(10).join(f'  Person {pid}: {deg} connections' for pid, deg in top_persons)}
+"""
+    if frequent:
+        prompt += "\nFrequent meeting pairs:\n"
+        for e in frequent[:10]:
+            prompt += f"  Person {e['person_id_a']} <-> Person {e['person_id_b']}: {e['total_meetings']} meetings, confidence={e.get('confidence',0):.2f}, type={e.get('relationship','?')}\n"
+
+    if very_strong:
+        prompt += "\nVery strong bonds:\n"
+        for e in very_strong[:10]:
+            prompt += f"  Person {e['person_id_a']} <-> Person {e['person_id_b']}: conf={e.get('confidence',0):.2f}, {e.get('total_meetings',0)} meetings\n"
+
+    prompt += "\nAnalyse these statistics. Flag any unusual or suspicious patterns. Return JSON list only."
+    return prompt
 
 
 def check_anomalies(graph_data: dict) -> list:
     """
-    Anonymises graph data and asks local LLM to flag unusual patterns.
+    Analyses graph data and asks local LLM to flag unusual patterns.
     Returns list of alert dicts: [{"severity": "high", "description": "..."}]
     """
-    anon    = anonymise_graph(graph_data)
-    prompt  = f"""
-Current surveillance graph statistics (all identities removed for privacy):
+    prompt = _build_anomaly_prompt(graph_data)
+    response = call_ollama(prompt, system=ANOMALY_SYSTEM, timeout=60)
 
-Total entities detected: {anon['total_entities']}
-Total relationships:     {anon['total_connections']}
-Strong relationships:    {anon['strong_connections']}
-Relationship breakdown:  {json.dumps(anon['relationship_types'], indent=2)}
-
-Observed patterns:
-{chr(10).join(f'- {p}' for p in anon['patterns']) or '- No unusual patterns observed'}
-
-Flag anything that warrants analyst attention.
-Return JSON list only, no other text.
-"""
-    response = call_ollama(prompt, system=ANOMALY_SYSTEM)
     if not response:
-        # Offline mock fallback
-        if anon['total_entities'] > 5 and anon['total_connections'] > 2:
-            return [{"severity": "medium", "description": f"Detected {anon['total_entities']} entities with {anon['total_connections']} connections. Possible coordinated activity."}]
-        elif anon['total_entities'] > 0:
-            return [{"severity": "low", "description": f"Tracking {anon['total_entities']} isolated entities. Normal baseline activity."}]
-        return []
+        # Offline fallback — generate basic alerts from raw stats
+        nodes = graph_data.get("nodes", [])
+        edges = graph_data.get("edges", [])
+        alerts = []
+        strong = [e for e in edges if e.get("confidence", 0) > 0.5]
+        if len(nodes) > 5 and len(edges) > 2:
+            alerts.append({"severity": "medium", "description": f"Detected {len(nodes)} persons with {len(edges)} relationships ({len(strong)} strong). Ollama offline — start server for detailed analysis."})
+        elif len(nodes) > 0:
+            alerts.append({"severity": "low", "description": f"Tracking {len(nodes)} persons. Normal baseline. Ollama offline."})
+        return alerts
 
-    # Parse JSON response
+    # Parse JSON response — handle markdown fences, partial output
     try:
-        # Strip markdown fences if model added them
-        clean = response.replace("```json", "").replace("```", "").strip()
+        clean = response
+        # Strip markdown code fences
+        if "```" in clean:
+            import re
+            match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', clean, re.DOTALL)
+            if match:
+                clean = match.group(1)
+            else:
+                clean = clean.replace("```json", "").replace("```", "")
+        clean = clean.strip()
+        # Try to find JSON array in the response
+        if not clean.startswith("["):
+            idx = clean.find("[")
+            if idx != -1:
+                clean = clean[idx:]
         alerts = json.loads(clean)
         if isinstance(alerts, list):
-            return alerts
+            return [a for a in alerts if isinstance(a, dict) and "description" in a]
     except Exception:
         # If LLM returned plain text, wrap it
-        if response and response != "[]":
-            return [{"severity": "low", "description": response}]
+        if response and response.strip() != "[]":
+            return [{"severity": "low", "description": response[:500]}]
     return []
 
 
 # ── Natural language query ────────────────────────────────────────────────────
 
-NL_QUERY_SYSTEM = """You are an analyst assistant for a surveillance system.
-You receive anonymised graph data and a natural language question.
-Answer helpfully and concisely in plain English.
-Do not make up information not present in the data.
-Refer to people as "Entity A", "Entity B" etc — never use real IDs."""
+NL_QUERY_SYSTEM = """You are an intelligent analyst assistant for the URG-IS (Urban Relationship Graph Intelligence System).
+You receive real-time graph data from a multi-camera surveillance system that tracks persons and their interactions.
+
+Rules:
+- Answer helpfully and concisely in plain English.
+- Reference Person IDs directly (e.g., "Person 14") so the analyst can act on your answer.
+- Use bullet points for clarity when listing multiple items.
+- Do not invent data. Only use what is provided.
+- Keep answers to 3-5 sentences unless a detailed list is needed.
+- For "who" questions, always name the specific Person ID(s).
+- For "how many" questions, give exact counts.
+- Mention relationship types (stranger, acquaintance, associate, close_associate, significant) when relevant."""
+
+
+def _build_nl_prompt(question: str, graph_data: dict) -> str:
+    """Build a rich context prompt for the NL query."""
+    nodes = graph_data.get("nodes", [])
+    edges = graph_data.get("edges", [])
+
+    # Compute degree map
+    deg_map = {}
+    for e in edges:
+        a, b = e.get("person_id_a", "?"), e.get("person_id_b", "?")
+        deg_map[a] = deg_map.get(a, 0) + 1
+        deg_map[b] = deg_map.get(b, 0) + 1
+
+    # Top 10 most connected
+    top = sorted(deg_map.items(), key=lambda x: x[1], reverse=True)[:10]
+
+    # Relationship breakdown
+    rel_counts = {}
+    for e in edges:
+        r = e.get("relationship", "unknown")
+        rel_counts[r] = rel_counts.get(r, 0) + 1
+
+    # Strongest relationships
+    strongest = sorted(edges, key=lambda e: e.get("confidence", 0), reverse=True)[:10]
+
+    # Most frequent meetings
+    most_meetings = sorted(edges, key=lambda e: e.get("total_meetings", 0), reverse=True)[:10]
+
+    prompt = f"""LIVE GRAPH DATA:
+- Total persons tracked: {len(nodes)}
+- Total relationships: {len(edges)}
+- Relationship types: {json.dumps(rel_counts)}
+
+Top 10 most connected persons:
+{chr(10).join(f'  Person {pid}: {deg} connections' for pid, deg in top) if top else '  (no connections yet)'}
+
+Top 10 strongest relationships (by confidence):
+{chr(10).join(f'  Person {e["person_id_a"]} <-> Person {e["person_id_b"]}: confidence={e.get("confidence",0):.3f}, type={e.get("relationship","?")}, meetings={e.get("total_meetings",0)}' for e in strongest) if strongest else '  (none yet)'}
+
+Top 10 most frequent meeting pairs:
+{chr(10).join(f'  Person {e["person_id_a"]} <-> Person {e["person_id_b"]}: {e.get("total_meetings",0)} meetings, confidence={e.get("confidence",0):.3f}' for e in most_meetings) if most_meetings else '  (none yet)'}
+
+Analyst question: {question}
+"""
+    return prompt
 
 
 def natural_language_query(question: str, graph_data: dict) -> str:
     """
-    Analyst types a question → gets a plain English answer.
-    Graph data is anonymised before sending to LLM.
+    Analyst types a question → gets a plain English answer with real Person IDs.
     
     Example questions:
       "Who is the most connected person today?"
       "Are there any groups forming?"
       "Which relationships are strongest?"
+      "How many active persons are there?"
+      "Tell me about Person 14"
     """
-    anon = anonymise_graph(graph_data)
+    if ANONYMISE_FOR_AGENT:
+        # Privacy mode — strip IDs
+        anon = anonymise_graph(graph_data)
+        prompt = f"Graph summary (identities removed):\n{json.dumps(anon, indent=2)}\n\nAnalyst question: {question}\n\nAnswer in 2-3 sentences."
+    else:
+        # Full detail mode — pass real IDs for actionable answers
+        prompt = _build_nl_prompt(question, graph_data)
 
-    prompt = f"""
-Graph summary (identities removed):
-{json.dumps(anon, indent=2)}
+    response = call_ollama(prompt, system=NL_QUERY_SYSTEM, timeout=60)
 
-Analyst question: {question}
-
-Answer in 2-3 sentences maximum.
-"""
-    response = call_ollama(prompt, system=NL_QUERY_SYSTEM)
     if not response:
-        # Offline mock fallback
-        return f"*(Offline Mode)* I see {anon['total_entities']} distinct entities and {anon['total_connections']} connections in the current graph. To get detailed natural language answers, please start the Ollama server."
+        # Offline fallback with basic stats
+        nodes = graph_data.get("nodes", [])
+        edges = graph_data.get("edges", [])
+        return (f"Ollama is offline. Basic stats: {len(nodes)} persons tracked, "
+                f"{len(edges)} relationships detected. "
+                f"Please ensure Ollama is running (ollama serve) for detailed answers.")
 
     return response
 
@@ -293,23 +414,46 @@ class AgentScheduler:
 # ── Standalone test ───────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("Testing Ollama connection...")
-    resp = call_ollama("Say 'OK' if you can hear me.", timeout=10)
+    print(f"Testing Ollama connection (model: {OLLAMA_MODEL})...")
+    print(f"Host: {OLLAMA_HOST}")
+    print(f"Agent enabled: {AGENT_ENABLED}")
+    print(f"Anonymise: {ANONYMISE_FOR_AGENT}")
+    print()
+
+    resp = call_ollama("Say 'OK' if you can hear me.", timeout=15)
     if resp:
         print(f"Ollama response: {resp}")
-        print("\nTesting anomaly detection with fake data...")
+
+        # Richer fake data for testing
+        print("\n--- Testing Anomaly Detection ---")
         fake = {
-            "nodes": [{"id": str(i), "degree": (8 if i == 3 else 1)} for i in range(10)],
+            "nodes": [{"id": str(i), "degree": (8 if i == 3 else 2 if i < 5 else 1)} for i in range(15)],
             "edges": [
-                {"person_id_a":"3","person_id_b":str(i),"confidence":0.4,
-                 "relationship":"acquaintance","total_meetings":2}
+                {"person_id_a": "3", "person_id_b": str(i), "confidence": 0.4 + i * 0.05,
+                 "relationship": "acquaintance" if i < 5 else "associate",
+                 "total_meetings": 2 + i}
                 for i in range(8)
+            ] + [
+                {"person_id_a": "1", "person_id_b": "11", "confidence": 0.92,
+                 "relationship": "significant", "total_meetings": 25},
+                {"person_id_a": "3", "person_id_b": "9", "confidence": 0.78,
+                 "relationship": "close_associate", "total_meetings": 12},
             ],
         }
         alerts = check_anomalies(fake)
-        print(f"Alerts: {json.dumps(alerts, indent=2)}")
-        print("\nTesting NL query...")
-        ans = natural_language_query("Who seems most important in this network?", fake)
-        print(f"Answer: {ans}")
+        print(f"Alerts ({len(alerts)}):")
+        for a in alerts:
+            print(f"  [{a.get('severity','?').upper()}] {a.get('description','')}")
+
+        print("\n--- Testing Natural Language Query ---")
+        questions = [
+            "Who is the most connected person?",
+            "Which relationships are the strongest?",
+            "Are there any unusual patterns?",
+        ]
+        for q in questions:
+            print(f"\nQ: {q}")
+            ans = natural_language_query(q, fake)
+            print(f"A: {ans}")
     else:
-        print("Ollama not available. Run: ollama serve && ollama pull llama3.2:3b")
+        print(f"Ollama not available. Run: ollama serve && ollama pull {OLLAMA_MODEL}")
