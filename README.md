@@ -2,7 +2,7 @@
 
 "Intelligence is not about capturing the past; it is about automating the anticipation of the future." (URG-IS Deployed Core Principle)
 
-URG-IS is a smart, fast, and local system designed to run on a computer at the site. It is built to follow data privacy rules, such as India's Digital Personal Data Protection (DPDP) Act. The system processes live camera video streams locally. This ensures that tracking coordinates and movement data never leave your own computer system.
+It is not a surveillance tool; it is a Relationship Intelligence Engine. It takes raw video and automatically transforms it into a living social network. By creating a unique digital signature for every person, URG-IS maps human behavior in real-time. We have moved the needle from Passive Monitoring to Predictive Intelligence.
 
 ## Complete Technical Stack
 
@@ -55,9 +55,6 @@ The system processes information to solve the following situations:
    * The Problem: Enforcing city rules such as littering and traffic violations like riding a motorcycle without a helmet or with too many passengers.
    * The Solution: The system monitors vehicle occupants and detects if anyone drops trash. It logs these events to the tracking database for processing.
 
-## Air-Gapped Deployment and Execution
-
-The system is configured to run fully offline. It can be deployed in environments with no internet connection to ensure zero data leaks.
 
 ### Prerequisites
 
