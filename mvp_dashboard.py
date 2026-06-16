@@ -54,10 +54,21 @@ def _telemetry_worker():
 
 # SAFE GUARD: Guard against Streamlit redraw loops spinning up hundreds of background threads
 if not hasattr(PS, '_worker_initialized'):
+    # Start telemetry worker thread
     threading.Thread(target=_telemetry_worker, daemon=True).start()
+    
+    # Start FastAPI backend server locally on port 8000
+    def _run_fastapi_server():
+        try:
+            import uvicorn
+            from main import app
+            # Run silently on localhost:8000
+            uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")
+        except Exception as e:
+            print(f"[FASTAPI BACKGROUND ERROR]: {e}")
+            
+    threading.Thread(target=_run_fastapi_server, daemon=True).start()
     PS._worker_initialized = True
-
-threading.Thread(target=_telemetry_worker, daemon=True).start()
 
 
 #  Page config 
