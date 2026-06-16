@@ -8,7 +8,7 @@ torch>=2.0.0
 torchvision>=0.15.0
 
 # Re-Identification
-torchreid>=1.4.0          
+torchreid>=0.2.5          
 faiss-cpu>=1.7.4          
 
 # Graph Database
