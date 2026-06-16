@@ -32,6 +32,10 @@ G = {
     "camera_sources": {},
     "fps":            {},   # cam_id -> float fps
     "errors":         [],
+    # ── Live tracking data for agents and heatmap ──────────────────────────
+    "person_positions": {},  # cam_id -> list of (cx_px, cy_px) for latest frame
+    "person_tracks":    {},  # person_id -> list of (x_m, y_m, timestamp) last 60 pts
+    "frame_shapes":     {},  # cam_id -> (height, width) of the camera frame
 }
 
 pipeline_thread = None   # set by _start_pipeline()

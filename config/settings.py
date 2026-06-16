@@ -76,7 +76,7 @@ DEBUG_DISTANCES           = os.getenv("DEBUG_DISTANCES", "false").lower() == "tr
 # Install:  curl -fsSL https://ollama.com/install.sh | sh
 # Pull:     ollama pull llama3.2:3b
 OLLAMA_HOST      = os.getenv("OLLAMA_HOST",      "http://localhost:11434")
-OLLAMA_MODEL     = os.getenv("OLLAMA_MODEL",     "llama3.2:3b")
+OLLAMA_MODEL     = os.getenv("OLLAMA_MODEL",     "gemma:7b")
 AGENT_ENABLED    = os.getenv("AGENT_ENABLED",    "false").lower() == "true"
 AGENT_INTERVAL_M = float(os.getenv("AGENT_INTERVAL_M", "10"))
 
@@ -149,3 +149,30 @@ REDIS_URL             = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 REDIS_STREAM_INCIDENTS = os.getenv("REDIS_STREAM_INCIDENTS", "urgis:incidents")
 REDIS_STREAM_MAXLEN    = int(os.getenv("REDIS_STREAM_MAXLEN", "10000"))
 REDIS_CONSUMER_GROUP   = os.getenv("REDIS_CONSUMER_GROUP", "urgis-workers")
+
+# ── Dynamic Camera & Location Helpers ─────────────────────────────────────────
+def get_camera_location_name(camera_id: str) -> str:
+    """Gets the location or setting name for a given camera ID from env or fallback defaults."""
+    env_name = os.getenv(f"LOCATION_NAME_{camera_id.upper()}")
+    if env_name:
+        return env_name
+    # Fallback to defaults
+    return {
+        "cam1": "Entrance & Foyer",
+        "cam2": "Fresh Produce Aisle",
+        "cam3": "Bakery & Dairy Section",
+        "cam4": "Checkout Counter Lanes",
+        "cam5": "Beverages & Snacks",
+        "cam6": "Pharmacy & Cosmetics",
+        "cam7": "Emergency Exit & Loading Dock"
+    }.get(camera_id.lower(), f"Camera Feed {camera_id.upper()}")
+
+def is_camera_outdoor(camera_id: str, location_name: str = "") -> bool:
+    """Determines if a camera is located outdoors."""
+    env_type = os.getenv(f"LOCATION_TYPE_{camera_id.upper()}")
+    if env_type:
+        return env_type.lower() == "outdoor"
+    
+    # Fallback to analyzing the location/setting name
+    s_low = location_name.lower()
+    return any(w in s_low for w in ["loading", "dock", "exit", "parking", "outside", "street", "road", "yard", "exterior"])

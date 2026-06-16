@@ -288,7 +288,11 @@ class IdentityManager:
         best_sim = float(similarities[0][0])
         best_idx = int(indices[0][0])
 
-        if best_sim >= self.threshold and best_idx < len(self._vector_to_person):
+        import os
+        env_val = os.getenv(f"FAISS_THRESHOLD_{camera_id.upper()}") if camera_id else None
+        threshold = float(env_val) if env_val else self.threshold
+
+        if best_sim >= threshold and best_idx < len(self._vector_to_person):
             # Match found
             person_id = self._vector_to_person[best_idx]
             return person_id, best_sim, False

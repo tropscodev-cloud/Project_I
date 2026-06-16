@@ -58,7 +58,7 @@ class MultiCameraStreamReader:
     """
 
     WILDTRACK_CAMS = [
-        "cam1", "cam2", "cam3", "cam4", "cam5", "cam6", "cam7"
+        "cam1", "cam2", "cam3"
     ]
 
     def __init__(

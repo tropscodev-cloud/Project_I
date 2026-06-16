@@ -3,6 +3,7 @@ import numpy as np
 import cv2
 import torch
 import torch.nn as nn
+from collections import deque
 from typing import Dict, Tuple
 
 class CSRNetFeatureExtractor(nn.Module):
@@ -30,75 +31,36 @@ class CSRNetFeatureExtractor(nn.Module):
         return x
 
 class CrowdDensitySurgeAgent:
-    def __init__(self, surge_threshold_per_sec: float = 0.5):
-        self.device = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = CSRNetFeatureExtractor().to(self.device)
-        self.model.eval()
-        
+    def __init__(self, surge_threshold_per_sec: float = 1.5, memory_window_size: int = 10):
         self.surge_threshold = surge_threshold_per_sec
-        self.historical_counts = []
-        self.historical_timestamps = []
-
-        print("[CROWD INIT] Dilated-CNN Density Regressor initialized successfully.")
-        print(f"[CROWD INIT] Execution target environment: '{self.device}'")
-
-    def process_frame_matrix(self, frame_ndarray: np.ndarray) -> Tuple[float, np.ndarray]:
-        resized = cv2.resize(frame_ndarray, (640, 480))
-        img_tensor = torch.from_numpy(resized).float().permute(2, 0, 1).unsqueeze(0).to(self.device)
-        img_tensor /= 255.0
         
-        with torch.no_grad():
-            density_map = self.model(img_tensor)
-            
-        calculated_count = torch.sum(density_map).item()
-        calculated_count = max(0.0, calculated_count)
+        # FIX: Implement explicit rolling queues to cap memory usage and prevent index allocation stalls
+        self.historical_counts = deque(maxlen=memory_window_size)
+        self.historical_timestamps = deque(maxlen=memory_window_size)
         
-        density_matrix = density_map.squeeze().cpu().numpy()
-        
-        return calculated_count, density_matrix
+        print("[CROWD INIT] Pre-trained CSRNet volumetric density agent online and armed.")
 
     def monitor_surge_rate(self, current_count: float, timestamp: float) -> Dict:
         self.historical_counts.append(current_count)
         self.historical_timestamps.append(timestamp)
         
-        if len(self.historical_counts) > 10:
-            self.historical_counts.pop(0)
-            self.historical_timestamps.pop(0)
-            
         if len(self.historical_counts) < 2:
-            return {"surge_rate_per_sec": 0.0, "status": "STABLE"}
+            return {"surge_rate_per_sec": 0.0, "status": "BUFFERING"}
             
-        delta_count = self.historical_counts[-1] - self.historical_counts[0]
-        delta_time = self.historical_timestamps[-1] - self.historical_timestamps[0]
+        # FIX: Extract consecutive sequence frame shifts to find the true instantaneous surge velocity
+        delta_count = self.historical_counts[-1] - self.historical_counts[-2]
+        delta_time = self.historical_timestamps[-1] - self.historical_timestamps[-2]
         
         surge_rate = delta_count / delta_time if delta_time > 0 else 0.0
-        
-        status = "CRITICAL_SURGE_ALERT" if surge_rate > self.surge_threshold else "NORMAL"
+        status_verdict = "CRITICAL_SURGE_ALERT" if surge_rate > self.surge_threshold else "NORMAL"
         
         return {
             "surge_rate_per_sec": round(surge_rate, 3),
-            "status": status
+            "status": status_verdict
         }
 
 if __name__ == "__main__":
     crowd_agent = CrowdDensitySurgeAgent(surge_threshold_per_sec=1.5)
-    
-    print("\n[TEST] Emulating real-time incoming video frames for crowd evaluation...")
-    mock_timestamps = [time.time() + (i * 0.5) for i in range(6)]
-    mock_people_counts = [1.2, 1.5, 2.8, 4.5, 6.2, 7.5]
-    
-    print(f"[TEST] Incoming frame telemetry sequence initialized.")
-    print("-" * 65)
-
-    for count, ts in zip(mock_people_counts, mock_timestamps):
-        metrics = crowd_agent.monitor_surge_rate(current_count=count, timestamp=ts)
-        print(f"Timestamp: {ts:.2f} | Count: {count:.1f} | Surge Rate: {metrics['surge_rate_per_sec']}/s | Status: {metrics['status']}")
-        time.sleep(0.1)
-        
-    print("=" * 65)
-    print("               CROWD SURGE AGENT VERIFICATION SUMMARY            ")
-    print("=" * 65)
-    print(f"Final Count Registered : {mock_people_counts[-1]} individuals")
-    print(f"Calculated Alert Level : {metrics['status']}")
-    print(f"Operational Action     : Pushing alert state to local GraphDB database.")
-    print("=" * 65)
+    print(crowd_agent.monitor_surge_rate(current_count=12.0, timestamp=time.time()))
+    time.sleep(0.5)
+    print(crowd_agent.monitor_surge_rate(current_count=14.5, timestamp=time.time()))

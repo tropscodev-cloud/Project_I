@@ -21,6 +21,7 @@ Relationship labels by confidence:
 import json
 import time
 import threading
+import colorsys
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional, Set
@@ -54,6 +55,36 @@ RELATIONSHIP_COLORS = {
     "close_associate" : "#ffb74d",
     "significant"     : "#e57373",
 }
+
+def get_relationship_color(relationship: str, confidence: float = 0.0) -> str:
+    base_hex = RELATIONSHIP_COLORS.get(relationship, "#888888")
+    ranges = {
+        "stranger"        : (0.0, 0.2),
+        "acquaintance"    : (0.2, 0.4),
+        "associate"       : (0.4, 0.6),
+        "close_associate" : (0.6, 0.8),
+        "significant"     : (0.8, 1.0)
+    }
+    low, high = ranges.get(relationship, (0.0, 1.0))
+    if high > low:
+        t = (confidence - low) / (high - low)
+    else:
+        t = 0.5
+    t = max(0.0, min(1.0, t))
+    
+    hex_val = base_hex.lstrip("#")
+    r = int(hex_val[0:2], 16) / 255.0
+    g = int(hex_val[2:4], 16) / 255.0
+    b = int(hex_val[4:6], 16) / 255.0
+    
+    h, l, s = colorsys.rgb_to_hls(r, g, b)
+    if relationship == "stranger":
+        l_new = 0.80 - (0.80 - 0.45) * t
+    else:
+        l_new = 0.85 - (0.85 - 0.35) * t
+    
+    r_new, g_new, b_new = colorsys.hls_to_rgb(h, l_new, s)
+    return f"#{int(r_new * 255 + 0.5):02x}{int(g_new * 255 + 0.5):02x}{int(b_new * 255 + 0.5):02x}"
 
 
 # ── Data containers ───────────────────────────────────────────────────────────
@@ -335,7 +366,7 @@ class GraphDB:
                     "person_id"       : neighbour,
                     "confidence"      : round(edge.confidence, 4),
                     "relationship"    : edge.relationship,
-                    "color"           : RELATIONSHIP_COLORS.get(edge.relationship, "#888888"),
+                    "color"           : get_relationship_color(edge.relationship, edge.confidence),
                     "total_meetings"  : edge.total_meetings,
                     "meetings_today"  : edge.meetings_today,
                     "last_incident"   : edge.last_incident,
@@ -468,7 +499,7 @@ class GraphDB:
             location_events  = d.get("location_events", []),
             first_seen       = d.get("first_seen", 0),
             last_seen        = d.get("last_seen", 0),
-            color            = RELATIONSHIP_COLORS.get(rel, "#888888"),
+            color            = get_relationship_color(rel, d.get("confidence", 0.0)),
         )
 
     def _load_snapshot(self):

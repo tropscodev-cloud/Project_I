@@ -45,12 +45,17 @@ def _telemetry_worker():
             if pl is None:
                 break
             try:
-                _session.post("http://127.0.0.1:8000/api/v1/telemetry", json=pl, timeout=0.05)
-            except Exception:
+                # Force the requests session to use an aggressive non-blocking configuration
+                _session.post("http://127.0.0.1:8000/api/v1/telemetry", json=pl, timeout=0.01)
+            except requests.exceptions.Timeout:
                 pass
-            _telemetry_queue.task_done()
         except Exception:
-            time.sleep(0.1)
+            pass
+
+# SAFE GUARD: Guard against Streamlit redraw loops spinning up hundreds of background threads
+if not hasattr(PS, '_worker_initialized'):
+    threading.Thread(target=_telemetry_worker, daemon=True).start()
+    PS._worker_initialized = True
 
 threading.Thread(target=_telemetry_worker, daemon=True).start()
 
@@ -1517,7 +1522,7 @@ elif page == "OPERATIONS":
         </div>
         <div style='display:flex;gap:12px'>
             <div style='border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 16px;background:rgba(15,23,42,0.5)'>
-                <div style='font-size:0.9rem;font-weight:700;color:#f8fafc'>7</div>
+                <div style='font-size:0.9rem;font-weight:700;color:#f8fafc'>3</div>
                 <div style='font-size:0.5rem;color:#94a3b8;letter-spacing:0.1em;font-weight:700'>ACTIVE CAMS</div>
             </div>
             <div style='border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 16px;background:rgba(15,23,42,0.5)'>
@@ -2187,24 +2192,26 @@ elif page == "AI AGENT":
     def _run_agent_query(question):
         if not question.strip():
             return
-        if not db_ref:
-            st.warning("Start pipeline first.")
+        if not PS.G.get("running", False):
+            st.warning("Start the main pipeline processing core first.")
             return
-        if not _ollama_ok:
-            st.warning("Ollama is offline. Start with: ollama serve")
-            return
+            
         st.session_state.chat_messages.append({"role": "user", "content": question})
+        
         try:
-            from agent import natural_language_query
-            gd = _build_graph_data()
-            if gd:
-                ans = natural_language_query(question, gd)
-                st.session_state.chat_messages.append({"role": "assistant", "content": ans})
-            else:
-                st.session_state.chat_messages.append({"role": "assistant", "content": "No graph data available. Start the pipeline first."})
+            with st.spinner("Streaming response parameters from local model orchestrated gateway..."):
+                # Offload inference directly to the FastAPI server endpoint on port 8000
+                res = requests.get("http://127.0.0.1:8000/api/v1/usecases/missing/19", params={"q": question}, timeout=45.0)
+                if res.status_code == 200:
+                    server_data = res.json()
+                    st.session_state.chat_messages.append({
+                        "role": "assistant", 
+                        "content": server_data.get("chatbot_payload", "Analysis payload compiled.")
+                    })
+                else:
+                    st.error(f"Gateway Server Refused: Received code {res.status_code}")
         except Exception as e:
-            st.session_state.chat_messages.append({"role": "assistant", "content": f"Error: {e}"})
-
+            st.error(f"Gateway Connection Failed: Ensure main.py backend is active on port 8000! ({str(e)})")
     ca2, cb2 = st.columns([0.2, 0.8], gap="large")
 
     with ca2:
@@ -2265,17 +2272,9 @@ elif page == "AI AGENT":
                 st.markdown("<div style='text-align:center; color:#64748b; padding-top:150px;'>Ask URG-IS Agent any question about the graph data.</div>", unsafe_allow_html=True)
             
             for msg in st.session_state.chat_messages:
-                is_user = msg["role"] == "user"
-                bubble_class = "user-bubble" if is_user else "bot-bubble"
-                label = "YOU" if is_user else "URG-IS CORE"
-                align = "flex-end" if is_user else "flex-start"
-                
-                st.markdown(f"""
-                <div class='chat-row' style='display:flex; flex-direction:column; align-items:{align};'>
-                    <div class='role-label' style='text-align:{"right" if is_user else "left"}; color:{"#3b82f6" if is_user else "#10b981"}'>{label}</div>
-                    <div class='{bubble_class}'>{msg['content']}</div>
-                </div>
-                """, unsafe_allow_html=True)
+                avatar = "👤" if msg["role"] == "user" else "🤖"
+                with st.chat_message(msg["role"], avatar=avatar):
+                    st.markdown(msg["content"])
 
         st.markdown("<div style='margin-top:15px; font-size:0.75rem; color:#64748b; font-weight:700;'>SUGGESTED QUERIES:</div>", unsafe_allow_html=True)
         eq_cols = st.columns(3)

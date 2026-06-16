@@ -6,17 +6,18 @@ class BehavioralAnomalyAgent:
     def __init__(self, anomaly_sensitivity_threshold: float = 2.5):
         self.sensitivity = anomaly_sensitivity_threshold
         self.window_size = 16
-
         print("[ANOMALY INIT] Spatio-Temporal Sequence Parser armed and active.")
         print("[ANOMALY INIT] Running securely in localized CPU engine mode.")
 
     def compute_kinematic_variance(self, window_data: np.ndarray) -> float:
+        # Crucial extraction components
         x_pts = window_data[:, 0]
         y_pts = window_data[:, 1]
         ts_pts = window_data[:, 2]
 
+        # Explicitly derive positional shifts across frames
         dt = np.diff(ts_pts)
-        dt[dt <= 0] = 0.033
+        dt[dt <= 0.001] = 0.033  # Safe video frame rate interval fallback (approx 30fps)
 
         dx = np.diff(x_pts)
         dy = np.diff(y_pts)
@@ -28,66 +29,44 @@ class BehavioralAnomalyAgent:
 
         total_path_length = np.sum(distances)
         net_displacement = np.sqrt((x_pts[-1] - x_pts[0])**2 + (y_pts[-1] - y_pts[0])**2)
+        
+        # Guard against stagnant or low-movement noise signals blowing up variance indices
         if net_displacement < 0.1 or total_path_length < 0.15:
-            tortuosity = 1.0
-        else:
-            tortuosity = total_path_length / net_displacement
+            return 0.01
 
-        anomaly_score = (acceleration_variance * 0.4) + (tortuosity * 1.5)
-        return float(anomaly_score)
+        # Complexity metric: Path length vs straight-line displacement
+        efficiency_ratio = total_path_length / max(0.01, net_displacement)
+        raw_anomaly_index = acceleration_variance * efficiency_ratio
 
-    def evaluate_entity_tracklet(self, entity_id: str, raw_history: List[Tuple[float, float, float]]) -> Dict:
-        if len(raw_history) < self.window_size:
+        return float(raw_anomaly_index)
+
+    def evaluate_entity_tracklet(self, entity_id: str, raw_coordinate_stream: List[Tuple[float, float, float]]) -> Dict:
+        if len(raw_coordinate_stream) < self.window_size:
             return {
                 "entity_id": entity_id,
-                "status": "COLLECTING_CONTEXT",
-                "current_depth": f"{len(raw_history)}/{self.window_size} frames"
+                "status": "INITIALIZING_STREAM",
+                "anomaly_score": 0.0,
+                "message": f"Buffering trajectory points. Current depth: {len(raw_coordinate_stream)}/{self.window_size}"
             }
 
-        target_window = np.array(raw_history[-self.window_size:], dtype=np.float32)
-        
-        score = self.compute_kinematic_variance(target_window)
-        
-        status = "NORMAL"
-        if score > self.sensitivity:
-            status = "BEHAVIORAL_ANOMALY_DETECTED"
+        # FIX: Force float64 allocation explicitly to capture Unix epoch sub-second timestamp decimals
+        matrix = np.array(raw_coordinate_stream, dtype=np.float64)
+        active_window = matrix[-self.window_size:]
+
+        anomaly_score = self.compute_kinematic_variance(active_window)
+        status_verdict = "BEHAVIORAL_ANOMALY_DETECTED" if anomaly_score > self.sensitivity else "NORMAL"
 
         return {
             "entity_id": entity_id,
-            "status": status,
-            "anomaly_score": round(score, 3),
+            "status": status_verdict,
+            "anomaly_score": round(anomaly_score, 3),
             "evaluated_window_size": self.window_size,
             "timestamp": time.time()
         }
 
 if __name__ == "__main__":
     anomaly_agent = BehavioralAnomalyAgent(anomaly_sensitivity_threshold=3.0)
-    
-    print("\n[TEST] Scenario A: Evaluating steady, linear pedestrian tracking inputs...")
     t_base = time.time()
-    normal_tracklet = [
-        (1.0 + (i * 0.1), 2.0 + (i * 0.1), t_base + (i * 0.04)) 
-        for i in range(16)
-    ]
-    
-    res_a = anomaly_agent.evaluate_entity_tracklet("WILDTRACK_PED_12", normal_tracklet)
-    print(f"Result A -> Status: {res_a['status']} | Score: {res_a.get('anomaly_score')}")
-
-    print("\n[TEST] Scenario B: Evaluating sudden erratic pacing/loitering behavior...")
-    erratic_tracklet = []
-    for i in range(16):
-        x_err = 5.0 + np.sin(i * 1.5) * 0.8
-        y_err = 4.0 + np.cos(i * 1.5) * 0.8
-        erratic_tracklet.append((x_err, y_err, t_base + (i * 0.04)))
-        
-    res_b = anomaly_agent.evaluate_entity_tracklet("SUBJECT_HOMESTEAD_04", erratic_tracklet)
-    
-    print("-" * 65)
-    print("             BEHAVIORAL ANOMALY AGENT OUTPUT REPORT              ")
-    print("=" * 65)
-    print(f"Target Entity  : {res_b['entity_id']}")
-    print(f"Engine Status  : {res_b['status']}")
-    print(f"Anomaly Score  : {res_b['anomaly_score']} (Threshold: 3.0)")
-    print(f"Unix Timestamp : {res_b['timestamp']}")
-    print(f"Action Taken   : Flagging entity sub-graph state as HIGH RISK inside GraphDB.")
-    print("=" * 65)
+    normal_tracklet = [(1.0 + (i * 0.1), 2.0 + (i * 0.1), t_base + (i * 1.0)) for i in range(16)]
+    res = anomaly_agent.evaluate_entity_tracklet("WILDTRACK_PED_12", normal_tracklet)
+    print(f"Standalone Test Executed: {res}")

@@ -4,7 +4,11 @@ venv/
 .env
 
 # Data and Models
-data/
+data/*
+!data/cam1.mp4
+!data/cam2.mp4
+!data/cam3.mp4
+!data/osnet_x0_25_market.pth
 *.pt
 *.onnx
 *.engine

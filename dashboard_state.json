@@ -1,11 +1,35 @@
 {
-  "running": false,
+  "running": true,
   "stop_requested": false,
-  "person_count": 0,
-  "active_cams": [],
-  "last_update": 0.0,
-  "total_frames": 0,
-  "camera_sources": {},
-  "fps": {},
+  "person_count": 83,
+  "active_cams": [
+    "cam1",
+    "cam2",
+    "cam3",
+    "cam4",
+    "cam5",
+    "cam6",
+    "cam7"
+  ],
+  "last_update": 1781604757.7143,
+  "total_frames": 2570,
+  "camera_sources": {
+    "cam1": "data/cam1.mp4",
+    "cam2": "data/cam2.mp4",
+    "cam3": "data/cam3.mp4",
+    "cam4": "data/cam4.mp4",
+    "cam5": "data/cam5.mp4",
+    "cam6": "data/cam6.mp4",
+    "cam7": "data/cam7.mp4"
+  },
+  "fps": {
+    "cam7": 4.1,
+    "cam1": 3.3,
+    "cam4": 4.0,
+    "cam6": 3.7,
+    "cam2": 3.5,
+    "cam5": 3.5,
+    "cam3": 3.3
+  },
   "errors": []
 }
